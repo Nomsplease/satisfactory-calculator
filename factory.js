@@ -19,9 +19,9 @@ import { BuildTarget } from "./target.js"
 import { Totals } from "./totals.js"
 import { renderTotals } from "./visualize.js"
 
-const DEFAULT_ITEM_KEY = "supercomputer"
+const DEFAULT_ITEM_KEY = "plutonium-waste"
 
-let minerCategories = new Set(["mineral", "oil", "water"])
+let minerCategories = new Set(["mineral", "oil", "water", "gift-tree", "fluid"])
 
 export let resourcePurities = [
     {key: "0", name: "Impure", factor: half},
@@ -32,14 +32,18 @@ export let resourcePurities = [
 export let DEFAULT_PURITY = resourcePurities[1]
 
 export let DEFAULT_BELT = "belt1"
+export let DEFAULT_PIPE = "pipe1"
 
 class FactorySpecification {
     constructor() {
+        this.datafile = null
+
         // Game data definitions
         this.items = null
         this.recipes = null
         this.buildings = null
         this.belts = null
+        this.pipes = null
 
         this.itemTiers = []
 
@@ -61,7 +65,8 @@ class FactorySpecification {
 
         this.format = new Formatter()
     }
-    setData(items, recipes, buildings, belts) {
+    setData(datafile, items, recipes, buildings, belts, pipes) {
+        this.datafile = datafile
         this.items = items
         let tierMap = new Map()
         for (let [itemKey, item] of items) {
@@ -92,6 +97,8 @@ class FactorySpecification {
         }
         this.belts = belts
         this.belt = belts.get(DEFAULT_BELT)
+        this.pipes = pipes
+        this.pipe = pipes.get(DEFAULT_PIPE)
         this.initMinerSettings()
     }
     initMinerSettings() {
@@ -170,14 +177,26 @@ class FactorySpecification {
     getBeltCount(rate) {
         return rate.div(this.belt.rate)
     }
+    getPipeCount(rate) {
+        return rate.div(this.pipe.rate)
+    }
     getPowerUsage(recipe, rate, itemCount) {
         let building = this.getBuilding(recipe)
         if (building === null || this.ignore.has(recipe)) {
             return {average: zero, peak: zero}
         }
+        let average = building.power
+        let peak = building.power
+
+        // For particle accelerator the recipe determines the power usage
+        if (building.isParticleAccelerator()){
+            average = recipe.averagePower
+            peak = recipe.maximumPower
+        }
+
         let count = this.getCount(recipe, rate)
-        let average = building.power.mul(count)
-        let peak = building.power.mul(count.ceil())
+        average = average.mul(count)
+        peak = peak.mul(count.ceil())
         let overclock = this.overclock.get(recipe)
         if (overclock !== undefined) {
             // The result of this exponent will typically be irrational, so
@@ -218,8 +237,15 @@ class FactorySpecification {
     solve() {
         let totals = new Totals()
         for (let target of this.buildTargets) {
-            let subtotals = target.item.produce(this, target.getRate(), this.ignore)
-            totals.combine(subtotals)
+            target.item.produce(this, this.ignore, totals, 0)
+            totals.solver.addWanted(target.item, target.getRate())
+        }
+        for(let rec of totals.solver.recipes){
+            rec.addToSolver(this, totals.solver, this.ignore)
+        }
+        totals.solutionVector = totals.solver.calculate()
+        for(let rec of totals.solver.recipeIndices.keys()){
+            totals.add(rec, this.getRecipeRate(rec).mul(totals.getBuildingFactor(rec)))
         }
         return totals
     }

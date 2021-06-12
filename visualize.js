@@ -21,7 +21,27 @@ const iconSize = 48
 const nodePadding = 20
 
 const columnWidth = 150
-const maxNodeHeight = 175
+const maxNodeHeight = 250
+
+function makeGraph2(totals, targets, ignore) {
+
+}
+
+function calcBelts(isFluid, spec, rate, link){
+    let belts = []
+    let beltCountExact = 1
+    if(isFluid){
+        beltCountExact = spec.getPipeCount(rate)
+    }else{
+        beltCountExact = spec.getBeltCount(rate)
+    }
+    let beltCount = beltCountExact.toFloat()
+    for (let j = one; j.less(beltCountExact); j = j.add(one)) {
+        let i = j.toFloat()
+        belts.push({link, i, beltCount})
+    }
+    return belts
+}
 
 function makeGraph(totals, targets, ignore) {
     let outputs = []
@@ -38,66 +58,107 @@ function makeGraph(totals, targets, ignore) {
         let ing = new Ingredient(item, rate)
         outputs.push(ing)
     }
-    let nodes = [{
-        "name": "output",
-        "ingredients": outputs,
-        "building": null,
-        "count": zero,
-        "rate": null,
-        "ignore": false,
-    }]
-    let nodeMap = new Map()
-    nodeMap.set("output", nodes[0])
+    let nodes = []
+    let recipeNodeMap = new Map()
+    let productNodeMap = new Map()
+
+    let maxHeight = 0;
+    for(let height of totals.heights.values()){
+        maxHeight = Math.max(maxHeight, height)
+    }
 
     for (let [recipe, rate] of totals.rates) {
         let building = spec.getBuilding(recipe)
         let count = spec.getCount(recipe, rate)
-        let node = {
-            "name": recipe.name,
+        if(!ignore.has(recipe)){
+            let buildingNode = {
+                "order": maxHeight - totals.heights.get(recipe),
+                "name": recipe.product.item.name,
+                "id": recipe.product.item.name + "Building",
+                "ingredients": recipe.ingredients,
+                "recipe": recipe,
+                "building": building,
+                "count": count,
+                "rate": rate,
+                "ignore": ignore.has(recipe),
+                "icon": building.iconPath()
+            }
+            nodes.push(buildingNode)
+            recipeNodeMap.set(recipe, buildingNode)
+        }
+        let productNode = {
+            "order": maxHeight - totals.heights.get(recipe) + 1,
+            "name": recipe.product.item.name,
+            "id": recipe.product.item.name + "Product",
             "ingredients": recipe.ingredients,
             "recipe": recipe,
             "building": building,
             "count": count,
             "rate": rate,
             "ignore": ignore.has(recipe),
+            "icon": recipe.product.item.iconPath()
         }
-        nodes.push(node)
-        nodeMap.set(recipe.name, node)
+        nodes.push(productNode)
+        productNodeMap.set(recipe.product.item, productNode)
     }
 
     let links = []
-    for (let node of nodes) {
-        if (node.ignore) {
-            continue
+
+    for(let [recipe, node] of recipeNodeMap){
+        let itemRate = node.rate.mul(recipe.product.amount)
+        let link = {
+            "source": node,
+            "target": productNodeMap.get(recipe.product.item),
+            "value": itemRate.toFloat(),
+            "rate": itemRate,
+            "itemname": node.recipe.product.item.name
         }
-        for (let ing of node.ingredients) {
-            let rate
-            if (node.name == "output") {
-                rate = ing.amount
-            } else {
-                rate = totals.rates.get(node.recipe).mul(ing.amount)
-            }
-            for (let subRecipe of ing.item.recipes) {
-                if (totals.rates.has(subRecipe)) {
-                    let link = {
-                        "source": nodeMap.get(subRecipe.name),
-                        "target": node,
-                        "value": rate.toFloat(),
-                        "rate": rate,
-                    }
-                    let belts = []
-                    let beltCountExact = spec.getBeltCount(rate)
-                    let beltCount = beltCountExact.toFloat()
-                    for (let j = one; j.less(beltCountExact); j = j.add(one)) {
-                        let i = j.toFloat()
-                        belts.push({link, i, beltCount})
-                    }
-                    link.belts = belts
-                    links.push(link)
+        link.belts = calcBelts(recipe.product.item.isFluid(), spec, itemRate, link);
+        links.push(link)
+        if(recipe.byproduct != null){
+            // Check if byproduct node does not exist yet, since it is not produced
+            if(!productNodeMap.has(recipe.byproduct.item)){
+                let byproductNode = {
+                    "order": maxHeight + 1,
+                    "name": recipe.byproduct.item.name,
+                    "id": recipe.byproduct.item.name + "Product",
+                    "ingredients": recipe.ingredients,
+                    "recipe": recipe,
+                    "building": spec.getBuilding(recipe),
+                    "count": one,
+                    "rate": node.rate,
+                    "ignore": ignore.has(recipe),
+                    "icon": recipe.byproduct.item.iconPath()
                 }
+                nodes.push(byproductNode)
+                productNodeMap.set(recipe.byproduct.item, byproductNode)
             }
+            let itemRate = node.rate.mul(recipe.byproduct.amount)
+            let link = {
+                "source": node,
+                "target": productNodeMap.get(recipe.byproduct.item),
+                "value": itemRate.toFloat(),
+                "rate": itemRate,
+                "itemname": node.recipe.byproduct.item.name
+            }
+            link.belts = calcBelts(recipe.byproduct.item.isFluid(), spec, itemRate, link);
+            links.push(link)
+        }
+        
+        for (let ing of node.ingredients) {
+            let ingRate = node.rate.mul(ing.amount)
+            let link = {
+                "source": productNodeMap.get(ing.item),
+                "target": node,
+                "value": ingRate.toFloat(),
+                "rate": ingRate,
+                "itemname": ing.item.name
+            }
+            link.belts = calcBelts(ing.item.isFluid(), spec, ingRate, link);
+            links.push(link)
         }
     }
+
     return {"nodes": nodes, "links": links}
 }
 
@@ -223,17 +284,25 @@ export function renderTotals(totals, targets, ignore) {
     let height = largestEstimate
 
     let svg = d3.select("svg#graph")
-        .attr("viewBox", `0,0,${width+20},${height+20}`)
-        .style("width", width+20)
-        .style("height", height+20)
+        .attr("viewBox", `0,0,${width},${height}`)
+        .style("width", width)
+        .style("height", height)
 
     svg.selectAll("g").remove()
 
-    let sankey = d3.sankey()
+    // let sankey = d3.sankey()
+    let sankey = d3.sankeyCircular()
         .nodeWidth(nodeWidth)
         .nodePadding(nodePadding)
         .nodeAlign(d3.sankeyRight)
-        .extent([[10, 10], [width + 10, height + 10]])
+        .extent([[10, 10], [width - 10, height - 10]])
+        .nodeId(function (d) {
+            return d.id;
+        })
+        // .size([width - 20, height - 20])
+        .iterations(5)
+        .circularLinkGap(1)
+        .sortNodes("order")
     let {nodes, links} = sankey(data)
 
     // Node rects
@@ -250,14 +319,13 @@ export function renderTotals(totals, targets, ignore) {
         .attr("height", d => d.y1 - d.y0)
         .attr("width", d => d.x1 - d.x0)
         .attr("fill", d => d3.color(color(d.name)).darker())
-    rects.filter(d => d.name != "output")
-        .append("image")
+    rects.append("image")
             .classed("ignore", d => ignore.has(d.recipe))
             .attr("x", d => d.x0 + 2)
             .attr("y", d => d.y0 + (d.y1 - d.y0) / 2 - (iconSize / 2))
             .attr("height", iconSize)
             .attr("width", iconSize)
-            .attr("xlink:href", d => d.recipe.iconPath())
+            .attr("xlink:href", d => d.icon)
 
     // For nodes without an associated machine, display the rate on a single line:
     rects.filter(d => d.count.isZero())
@@ -283,18 +351,32 @@ export function renderTotals(totals, targets, ignore) {
         .attr("dy", "1em")
         .text(getOverclockString)
 
-    // Link paths
-    let link = svg.append("g")
-        .classed("links", true)
-        .selectAll("g")
-        .data(links)
-        .join("g")
-            //.style("mix-blend-mode", "multiply")
+    // // Link paths
+    // let link = svg.append("g")
+    //     .classed("links", true)
+    //     .selectAll("g")
+    //     .data(links)
+    //     .join("g")
+    //     .style("mix-blend-mode", "multiply")
+    let linkG = svg.append("g")
+      .attr("class", "links")
+      .attr("fill", "none")
+      .attr("stroke-opacity", 0.2)
+      .selectAll("path");
+
+    let link = linkG.data(links)
+      .enter()
+      .append("g")
+
     link.append("path")
         .attr("fill", "none")
         .attr("stroke-opacity", 0.3)
-        .attr("d", d3.sankeyLinkHorizontal())
-        .attr("stroke", d => color(d.source.name))
+        .attr("class", "sankey-link")
+        .attr("d", function(link){
+          return link.path;
+        })
+        // .attr("d", d3.sankeyLinkHorizontal())
+        .attr("stroke", d => color(d.itemname))
         .attr("stroke-width", d => Math.max(1, d.width))
     // Don't draw belts if we have less than three pixels per belt.
     if (beltDensity >= 3) {
@@ -305,7 +387,7 @@ export function renderTotals(totals, targets, ignore) {
                 .attr("fill", "none")
                 .attr("stroke-opacity", 0.3)
                 .attr("d", beltPath)
-                .attr("stroke", d => color(d.link.source.name))
+                .attr("stroke", d => color(d.link.itemname))
                 .attr("stroke-width", 1)
     }
     link.append("title")

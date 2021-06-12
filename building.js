@@ -13,6 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.*/
 import { Rational } from "./rational.js"
 
+const CATEGORYPARTICLE = "particleacceleration"
+const NUCLEARPLANT = "nuclearpowerplant"
+
 class Building {
     constructor(key, name, category, power, max) {
         this.key = key
@@ -30,6 +33,12 @@ class Building {
     }
     iconPath() {
         return "images/" + this.name + ".png"
+    }
+    isParticleAccelerator(){
+        return this.category == CATEGORYPARTICLE
+    }
+    isNuclearPlant(){
+        return this.category == NUCLEARPLANT
     }
 }
 

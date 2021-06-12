@@ -11,15 +11,17 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.*/
+import { minimum } from "./rational.js"
 import { Totals } from "./totals.js"
 
 export class Item {
-    constructor(key, name, tier) {
+    constructor(key, name, tier, stack_size) {
         this.key = key
         this.name = name
         this.tier = tier
         this.recipes = []
         this.uses = []
+        this.stack_size = stack_size
 		//this.byproduct = []
     }
     addRecipe(recipe) {
@@ -31,22 +33,21 @@ export class Item {
     addUse(recipe) {
         this.uses.push(recipe)
     }
-    produce(spec, rate, ignore) {
-        let totals = new Totals()
+
+    isFluid(){
+        return this.stack_size == -1
+    }
+    produce(spec, ignore, totals, height) {
         let recipe = spec.getRecipe(this)
-        let gives = recipe.gives(this)
-        //let byproduct = recipe.byproduct(this)
-        rate = rate.div(gives)
-        totals.add(recipe, rate)
-        totals.updateHeight(recipe, 0)
+        totals.solver.addRecipe(recipe)
+        totals.updateHeight(recipe, height)
         if (ignore.has(recipe)) {
-            return totals
+            return
         }
         for (let ing of recipe.ingredients) {
-            let subtotals = ing.item.produce(spec, rate.mul(ing.amount), ignore)
-            totals.combine(subtotals)
+            ing.item.produce(spec, ignore, totals, height + 2)
         }
-        return totals
+        return
     }
     iconPath() {
         return "images/" + this.name + ".png"
@@ -56,7 +57,7 @@ export class Item {
 export function getItems(data) {
     let items = new Map()
     for (let d of data.items) {
-        items.set(d.key_name, new Item(d.key_name, d.name, d.tier))
+        items.set(d.key_name, new Item(d.key_name, d.name, d.tier, d.stack_size))
     }
     return items
 }
